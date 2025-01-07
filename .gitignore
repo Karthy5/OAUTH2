@@ -1,0 +1,43 @@
+# Python
+*.pyc
+*.pyo
+__pycache__/
+*.pyd
+*.pdb
+*.egg
+*.eggs
+dist/
+build/
+*.bak
+*.swp
+*.swo
+
+# Environment variables file
+.env
+
+# Flask-related
+instance/
+*.db
+*.sqlite3
+
+# Logs
+*.log
+
+# Virtual Environment
+venv/
+.env/
+.venv/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.iml
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
