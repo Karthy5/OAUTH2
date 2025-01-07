@@ -9,32 +9,33 @@ import logging
 import pytz
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables from .env (so we don't keep sensitive info like API keys in the code)
 load_dotenv()
 
-# Setup logging
+# Set up logging to help us see what's going on
 logging.basicConfig(level=logging.DEBUG)
 
-# Create Flask app
+# Create the Flask app
 app = Flask(__name__)
+# Secret key for sessions, it's important for security. Using a random one here
 app.secret_key = os.getenv('FLASK_SECRET_KEY', os.urandom(24))
 
-# Configure OAuth
+# Set up OAuth for Google authentication
 oauth = OAuth(app)
 
-# Register Google OAuth
+# Register Google as our OAuth provider
 google = oauth.register(
     name='google',
     client_id=os.getenv('GOOGLE_CLIENT_ID'),
     client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
     server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
     client_kwargs={
-        'scope': 'openid email profile https://www.googleapis.com/auth/calendar',
+        'scope': 'openid email profile https://www.googleapis.com/auth/calendar',  # Access to calendar
     }
 )
 
 def build_calendar_service():
-    """Build the Google Calendar API service."""
+    """Helper function to create a Google Calendar service."""
     if 'user_token' not in session:
         return None
 
@@ -47,7 +48,7 @@ def build_calendar_service():
         client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
     )
 
-    # Refresh the token if needed
+    # If the credentials are expired, we try to refresh them
     if credentials.expired and credentials.refresh_token:
         credentials.refresh(Request())
 
@@ -66,20 +67,23 @@ def home():
 
 @app.route('/login')
 def login():
+    # Redirect to Google's login page
     redirect_uri = url_for('authorize', _external=True)
     return google.authorize_redirect(redirect_uri)
 
 @app.route('/callback')
 def authorize():
-    token = google.authorize_access_token()  # Exchange code for token
-    session['user_token'] = token  # Save token in session
-    userinfo_endpoint = google.server_metadata.get('userinfo_endpoint')  # Dynamically fetch userinfo endpoint
-    user_info = google.get(userinfo_endpoint).json()  # Fetch user info
-    session['user'] = user_info  # Save user info in session
+    # This is the route Google will redirect to after successful login
+    token = google.authorize_access_token()  # Get the access token from Google
+    session['user_token'] = token  # Save the token in the session
+    userinfo_endpoint = google.server_metadata.get('userinfo_endpoint')  # Get the user's info
+    user_info = google.get(userinfo_endpoint).json()  # Get user data from Google
+    session['user'] = user_info  # Save the user info in the session
     return redirect('/')
 
 @app.route('/logout')
 def logout():
+    # Log out the user by clearing their session
     session.pop('user', None)
     session.pop('user_token', None)
     return redirect('/')
@@ -90,7 +94,7 @@ def tasks():
     if not service:
         return redirect('/login')
 
-    # HTML Template for displaying tasks and a form for adding new tasks
+    # Template to show tasks and a form to add new ones
     html_template = """
     <h1>Task Manager</h1>
     <form method="post">
@@ -126,26 +130,26 @@ def tasks():
         task_description = request.form.get('description')
         task_due_date = request.form.get('due_date')  # Format: YYYY-MM-DDTHH:MM
 
-        # Ensure seconds are included in the time if missing
-        if len(task_due_date) == 16:  # If no seconds part is provided, append ':00'
+        # If the time doesn't have seconds, we add them to avoid errors
+        if len(task_due_date) == 16:  # Format is without seconds
             task_due_date += ':00'
 
         logging.debug(f"Received task due date: {task_due_date}")
 
-        # Convert local time to UTC
+        # Convert local time to UTC time
         try:
             local_tz = pytz.timezone('Asia/Kolkata')  # Adjust the timezone if necessary
             local_time = datetime.strptime(task_due_date, "%Y-%m-%dT%H:%M:%S")
-            local_time = local_tz.localize(local_time)  # Localize the time to your local timezone
-            utc_time = local_time.astimezone(pytz.utc)  # Convert to UTC
+            local_time = local_tz.localize(local_time)  # Localize the time to your timezone
+            utc_time = local_time.astimezone(pytz.utc)  # Convert it to UTC
             task_due_date_utc = utc_time.isoformat()
 
             logging.debug(f"Converted task due date to UTC: {task_due_date_utc}")
         except Exception as e:
-            logging.error(f"Error converting local time to UTC: {str(e)}")
-            return f"Error converting time: {str(e)}"
+            logging.error(f"Error converting time: {str(e)}")
+            return f"Error: {str(e)}"
 
-        # Create the event object
+        # Now create the event object and add it to the calendar
         try:
             event = {
                 'summary': task_title,
@@ -162,6 +166,7 @@ def tasks():
 
             logging.debug(f"Event to add: {event}")
 
+            # Insert the event into the Google Calendar
             event_result = service.events().insert(calendarId='primary', body=event).execute()
 
             logging.debug(f"Event added successfully: {event_result}")
@@ -172,9 +177,9 @@ def tasks():
 
         return render_template_string(html_template, tasks=[], message=message)
 
-    # For GET requests, list upcoming tasks
+    # If it's a GET request, list the upcoming tasks
     try:
-        now = datetime.now(timezone.utc).isoformat()  # Get current UTC time
+        now = datetime.now(timezone.utc).isoformat()  # Current UTC time
         events_result = service.events().list(
             calendarId='primary',
             timeMin=now,
@@ -190,7 +195,7 @@ def tasks():
                 "summary": event.get('summary', 'No Title'),
                 "description": event.get('description', 'No Description'),
                 "start": event.get('start', {}).get('dateTime', 'No Start Time'),
-                "id": event['id'],  # Store the event ID for deletion
+                "id": event['id'],  # We need the ID to delete the task later
             })
 
         return render_template_string(html_template, tasks=tasks, message=None)
